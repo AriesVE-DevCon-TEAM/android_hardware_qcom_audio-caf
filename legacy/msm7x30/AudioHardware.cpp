@@ -4430,6 +4430,14 @@ ssize_t AudioHardware::AudioSessionOutLPA::write(const void* buffer, size_t byte
     ALOGV("write Empty Queue size() = %d, Filled Queue size() = %d ",
          mEmptyQueue.size(),mFilledQueue.size());
 
+    if (mSkipWrite) {
+        mSkipWrite = false;
+        if (bytes < LPA_BUFFER_SIZE)
+            bytes = 0;
+        else
+            return UNKNOWN_ERROR;
+    }
+
     //2.) Dequeue the buffer from empty buffer queue. Copy the data to be
     //    written into the buffer. Then Enqueue the buffer to the filled
     //    buffer queue
@@ -4495,10 +4503,12 @@ ssize_t AudioHardware::AudioSessionOutLPA::write(const void* buffer, size_t byte
 
     if (bytes < LPA_BUFFER_SIZE) {
         ALOGV("Last buffer case");
+        mReachedEOS = true;
+        mLock.unlock();
         if (fsync(afd) != 0) {
             ALOGE("fsync failed.");
         }
-        mReachedEOS = true;
+        mLock.lock();
     }
 
     return NO_ERROR; //TODO Do wee need to send error
@@ -4653,6 +4663,7 @@ void* AudioHardware::AudioSessionOutLPA::memBufferAlloc(int nSize, int32_t *ion_
     // 3. Store this information for internal mapping / maintanence
     BuffersAllocated buf(local_buf, ion_buf, nSize, fd_data.fd, alloc_data.handle);
     mEmptyQueue.push_back(buf);
+    mBufPool.push_back(buf);
 
     // 4. Send the mem fd information
     *ion_fd = fd_data.fd;
@@ -4718,6 +4729,11 @@ void AudioHardware::AudioSessionOutLPA::bufferDeAlloc()
         mFilledQueue.erase(it);
     }
     mFilledQueueMutex.unlock();
+    while (!mBufPool.empty()) {
+        List<BuffersAllocated>::iterator it = mBufPool.begin();
+        ALOGE("Removing input buffer from Buffer Pool ");
+        mBufPool.erase(it);
+    }
     if (ionfd >= 0) {
         close(ionfd);
         ionfd = -1;
@@ -4774,11 +4790,11 @@ void  AudioHardware::AudioSessionOutLPA::eventThreadEntry()
         switch ( cur_pcmdec_event.event_type ) {
         case AUDIO_EVENT_WRITE_DONE:
             {
+                Mutex::Autolock autoLock(mLock);
                 ALOGE("WRITE_DONE: addr %p len %d and fd is %d\n",
                      cur_pcmdec_event.event_payload.aio_buf.buf_addr,
                      cur_pcmdec_event.event_payload.aio_buf.data_len,
                      (int32_t) cur_pcmdec_event.event_payload.aio_buf.private_data);
-                Mutex::Autolock autoLock(mLock);
                 mFilledQueueMutex.lock();
                 BuffersAllocated buf = *(mFilledQueue.begin());
                 for (List<BuffersAllocated>::iterator it = mFilledQueue.begin();
@@ -4974,18 +4990,21 @@ status_t AudioHardware::AudioSessionOutLPA::drain()
 
 status_t AudioHardware::AudioSessionOutLPA::flush()
 {
+    Mutex::Autolock autoLock(mLock);
     ALOGV("LPA playback flush ");
     int err;
 
     // 2.) Add all the available buffers to Empty Queue (Maintain order)
     mFilledQueueMutex.lock();
     mEmptyQueueMutex.lock();
-    while (!mFilledQueue.empty()) {
-        List<BuffersAllocated>::iterator it = mFilledQueue.begin();
-        BuffersAllocated buf = *it;
-        buf.bytesToWrite = 0;
-        mEmptyQueue.push_back(buf);
-        mFilledQueue.erase(it);
+    // 1.) Clear the Empty and Filled buffer queue
+    mEmptyQueue.clear();
+    mFilledQueue.clear();
+    // 2.) Add all the available buffers to Empty Queue (Maintain order)
+    List<BuffersAllocated>::iterator it = mBufPool.begin();
+    for (; it!=mBufPool.end(); ++it) {
+       memset(it->memBuf, 0x0, (*it).memBufsize);
+       mEmptyQueue.push_back(*it);
     }
     mEmptyQueueMutex.unlock();
     mFilledQueueMutex.unlock();
@@ -5067,6 +5086,8 @@ void AudioHardware::AudioSessionOutLPA::reset()
     }
     deleteFromTable(LPA_DECODE);
     updateDeviceInfo(cur_rx, cur_tx);
+    mGenerateEOS = false;
+
     ioctl(afd,AUDIO_STOP,0);
     mIsDriverStarted = false;
     requestAndWaitForEventThreadExit();
@@ -5086,7 +5107,7 @@ status_t AudioHardware::AudioSessionOutLPA::getBufferInfo(buf_info **buf) {
     tempbuf->bufsize = LPA_BUFFER_SIZE;
     tempbuf->nBufs = mInputBufferCount;
     tempbuf->buffers = (int **)((char*)tempbuf + sizeof(buf_info));
-    List<BuffersAllocated>::iterator it = mEmptyQueue.begin();
+    List<BuffersAllocated>::iterator it = mBufPool.begin();
     for (int i = 0; i < mInputBufferCount; i++) {
         tempbuf->buffers[i] = (int *)it->memBuf;
         it++;
@@ -5100,23 +5121,25 @@ status_t AudioHardware::AudioSessionOutLPA::isBufferAvailable(int *isAvail) {
     Mutex::Autolock autoLock(mLock);
     ALOGV("isBufferAvailable Empty Queue size() = %d, Filled Queue size() = %d ",
           mEmptyQueue.size(),mFilledQueue.size());
-
+    *isAvail = false;
     // 1.) Wait till a empty buffer is available in the Empty buffer queue
     mEmptyQueueMutex.lock();
     if (mEmptyQueue.empty()) {
         ALOGV("Write: waiting on mWriteCv");
         mLock.unlock();
         mWriteCv.wait(mEmptyQueueMutex);
+        mEmptyQueueMutex.unlock();
         mLock.lock();
         if (mSkipWrite) {
             ALOGV("Write: Flushing the previous write buffer");
             mSkipWrite = false;
-            mEmptyQueueMutex.unlock();
             return NO_ERROR;
         }
         ALOGV("isBufferAvailable: received a signal to wake up");
-    }
-    mEmptyQueueMutex.unlock();
+    }else {
+        ALOGV("Buffer available in empty queue");
+        mEmptyQueueMutex.unlock();
+        }
 
     *isAvail = true;
     return NO_ERROR;
