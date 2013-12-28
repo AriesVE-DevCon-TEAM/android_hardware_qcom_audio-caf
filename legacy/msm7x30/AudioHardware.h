@@ -245,9 +245,9 @@ enum tty_modes {
 #define AUDIO_HW_OUT_LATENCY_MS 0  // Additionnal latency introduced by audio DSP and hardware in ms
 
 #define AUDIO_HW_IN_SAMPLERATE 8000                 // Default audio input sample rate
-#define AUDIO_HW_IN_CHANNELS (AudioSystem::CHANNEL_IN_MONO) // Default audio input channel mask
+#define AUDIO_HW_IN_CHANNELS (AUDIO_CHANNEL_IN_MONO) // Default audio input channel mask
 #define AUDIO_HW_IN_BUFFERSIZE 2048                 // Default audio input buffer size
-#define AUDIO_HW_IN_FORMAT (AudioSystem::PCM_16_BIT)  // Default audio input sample format
+#define AUDIO_HW_IN_FORMAT (AUDIO_FORMAT_PCM_16_BIT)  // Default audio input sample format
 #define AUDIO_HW_VOIP_BUFFERSIZE_8K 320
 #define AUDIO_HW_VOIP_BUFFERSIZE_16K 640
 #define AUDIO_HW_VOIP_SAMPLERATE_8K 8000
@@ -416,8 +416,8 @@ private:
         virtual uint32_t    sampleRate() const { return 44100; }
         // must be 32-bit aligned - driver only seems to like 4800
         virtual size_t      bufferSize() const { return 4800; }
-        virtual uint32_t    channels() const { return AudioSystem::CHANNEL_OUT_STEREO; }
-        virtual int         format() const { return AudioSystem::PCM_16_BIT; }
+        virtual uint32_t    channels() const { return AUDIO_CHANNEL_OUT_STEREO; }
+        virtual int         format() const { return AUDIO_FORMAT_PCM_16_BIT; }
         virtual uint32_t    latency() const { return (1000*AUDIO_HW_NUM_OUT_BUF*(bufferSize()/frameSize()))/sampleRate()+AUDIO_HW_OUT_LATENCY_MS; }
         virtual status_t    setVolume(float left, float right) { return INVALID_OPERATION; }
         virtual ssize_t     write(const void* buffer, size_t bytes);
@@ -451,7 +451,7 @@ private:
         // must be 32-bit aligned - driver only seems to like 4800
         virtual size_t      bufferSize() const { ALOGE(" AudioStreamOutDirect: bufferSize\n"); return 320; }
         virtual uint32_t    channels() const {ALOGD(" AudioStreamOutDirect: channels\n"); return mChannels; }
-        virtual int         format() const {ALOGE(" AudioStreamOutDirect: format\n"); return AudioSystem::PCM_16_BIT; }
+        virtual int         format() const {ALOGE(" AudioStreamOutDirect: format\n"); return AUDIO_FORMAT_PCM_16_BIT; }
         virtual uint32_t    latency() const { return (1000*AUDIO_HW_NUM_OUT_BUF*(bufferSize()/frameSize()))/sampleRate()+AUDIO_HW_OUT_LATENCY_MS; }
         virtual status_t    setVolume(float left, float right) { return INVALID_OPERATION; }
         virtual ssize_t     write(const void* buffer, size_t bytes);
