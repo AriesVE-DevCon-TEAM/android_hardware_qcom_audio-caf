@@ -2359,15 +2359,18 @@ int AudioHardware::aic3254_set_volume(int volume) {
 }
 #endif
 
-status_t AudioHardware::doRouting(AudioStreamInMSM72xx *input)
+status_t AudioHardware::doRouting(AudioStreamInMSM72xx *input, int outputDevice)
 {
     Mutex::Autolock lock(mLock);
-    uint32_t outputDevices = mOutput->devices();
+    uint32_t outputDevices;
     status_t ret = NO_ERROR;
     int audProcess = (ADRC_DISABLE | EQ_DISABLE | RX_IIR_DISABLE);
     int sndDevice = -1;
 
-
+    if (outputDevice)
+        outputDevices = outputDevice;
+    else
+        outputDevices = mOutput->devices();
 
     if (input != NULL) {
         uint32_t inputDevice = input->devices();
@@ -3071,7 +3074,7 @@ status_t AudioHardware::AudioStreamOutMSM72xx::setParameters(const String8& keyV
     if (param.getInt(key, device) == NO_ERROR) {
         mDevices = device;
         ALOGV("set output routing %x", mDevices);
-        status = mHardware->doRouting(NULL);
+        status = mHardware->doRouting(NULL, device);
         param.remove(key);
     }
 
