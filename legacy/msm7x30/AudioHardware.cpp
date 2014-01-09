@@ -890,33 +890,28 @@ status_t AudioHardware::initCheck()
 }
 
 AudioStreamOut* AudioHardware::openOutputStream(
-        uint32_t devices,  int *format, uint32_t *channels,
+        uint32_t devices, int *format, uint32_t *channels,
         uint32_t *sampleRate, status_t *status)
-
 {
      ALOGD("AudioHardware::openOutputStream devices %x format %d channels %d samplerate %d",
         devices, *format, *channels, *sampleRate);
 
      audio_output_flags_t flags = static_cast<audio_output_flags_t> (*status);
 
-
     { // scope for the lock
-        Mutex::Autolock lock(mLock);
+        status_t lStatus;
 
-        // only one output stream allowed
+        Mutex::Autolock lock(mLock);
 #ifdef WITH_QCOM_VOIP_OVER_MVS
-        if (mOutput && !((flags & AUDIO_OUTPUT_FLAG_DIRECT) && (flags & AUDIO_OUTPUT_FLAG_VOIP_RX))
-#else
-        if (mOutput) {
-#endif
+        // only one output stream allowed
+       if (mOutput && !((flags & AUDIO_OUTPUT_FLAG_DIRECT) && (flags & AUDIO_OUTPUT_FLAG_VOIP_RX))
+                    && !(flags & AUDIO_OUTPUT_FLAG_LPA)) {
             if (status) {
                 *status = INVALID_OPERATION;
             }
             ALOGE(" AudioHardware::openOutputStream Only one output stream allowed \n");
             return 0;
         }
-#ifdef WITH_QCOM_VOIP_OVER_MVS
-        status_t lStatus;
         if((flags & AUDIO_OUTPUT_FLAG_DIRECT) && (flags & AUDIO_OUTPUT_FLAG_VOIP_RX)){
             if(mDirectOutput == 0) {
                 // open direct output stream
@@ -937,20 +932,24 @@ AudioStreamOut* AudioHardware::openOutputStream(
             else
                 ALOGE(" \n AudioHardware::AudioStreamOutDirect is already open");
             return mDirectOutput;
-        }else if (flags & AUDIO_OUTPUT_FLAG_LPA) {
-            status_t err = BAD_VALUE;
+        } else
+#endif
+            if (flags & AUDIO_OUTPUT_FLAG_LPA) {
+                        status_t err = BAD_VALUE;
             // create new output LPA stream
-            AudioSessionOutLPA* out = new AudioSessionOutLPA(this, devices, *format, *channels,*sampleRate,0,&err);
+            AudioSessionOutLPA* out = NULL;
+#ifdef QCOM_TUNNEL_LPA_ENABLED
+            out = new AudioSessionOutLPA(this, devices, *format, *channels,*sampleRate,0,&err);
             if(err != NO_ERROR) {
                 delete out;
                 out = NULL;
             }
+#endif
             if (status) *status = err;
             mOutputLPA = out;
             return mOutputLPA;
-        }
-        else
-        {
+        } else {
+#if 0
             ALOGV(" AudioHardware::openOutputStream AudioStreamOutMSM72xx output stream \n");
             // only one output stream allowed
             if (mOutput) {
@@ -960,7 +959,7 @@ AudioStreamOut* AudioHardware::openOutputStream(
                 ALOGE(" AudioHardware::openOutputStream Only one output stream allowed \n");
                 return 0;
             }
-
+#endif
             // create new output stream
             AudioStreamOutMSM72xx* out = new AudioStreamOutMSM72xx();
             lStatus = out->set(this, devices, format, channels, sampleRate);
@@ -975,38 +974,23 @@ AudioStreamOut* AudioHardware::openOutputStream(
             return mOutput;
          }
      }
-#else
-        // create new output stream
-        AudioStreamOutMSM72xx* out = new AudioStreamOutMSM72xx();
-        status_t lStatus = out->set(this, devices, format, channels, sampleRate);
-        if (status) {
-            *status = lStatus;
-        }
-        if (lStatus == NO_ERROR) {
-            mOutput = out;
-        } else {
-            delete out;
-        }
-    }
-    return mOutput;
-#endif
+     return NULL;
 }
 
 void AudioHardware::closeOutputStream(AudioStreamOut* out) {
     Mutex::Autolock lock(mLock);
+    if ((mOutput == 0
 #ifdef WITH_QCOM_VOIP_OVER_MVS
-    if ((mOutput == 0 && mDirectOutput == 0 && mOutputLPA == 0) ||
-        ((mOutput != out) && (mDirectOutput != out) && (mOutputLPA != out))){
-#else
-    if (mOutput == 0 || mOutput != out) {
+        && mDirectOutput == 0
 #endif
+        && mOutputLPA == 0) || ((mOutput != out)
+#ifdef WITH_QCOM_VOIP_OVER_MVS
+         && (mDirectOutput != out)
+#endif
+       && (mOutputLPA != out))) {
         ALOGW("Attempt to close invalid output stream");
     }
-#ifdef WITH_QCOM_VOIP_OVER_MVS
     else if (mOutput == out) {
-#else
-    else {
-#endif
         delete mOutput;
         mOutput = 0;
     }
@@ -1016,12 +1000,12 @@ void AudioHardware::closeOutputStream(AudioStreamOut* out) {
         delete mDirectOutput;
         mDirectOutput = 0;
     }
+#endif
     else if (mOutputLPA == out) {
         ALOGV("Deleting  mOutputLPA \n");
         delete mOutputLPA;
         mOutputLPA = 0;
     }
-#endif
 }
 
 AudioStreamIn* AudioHardware::openInputStream(
@@ -4333,6 +4317,7 @@ AudioHardware::AudioStreamInMSM72xx *AudioHardware::getActiveInput_l()
     return NULL;
 }
 
+#ifdef QCOM_TUNNEL_LPA_ENABLED
 AudioHardware::AudioSessionOutLPA::AudioSessionOutLPA( AudioHardware *hw,
                                          uint32_t   devices,
                                          int        format,
@@ -5144,6 +5129,7 @@ status_t AudioHardware::AudioSessionOutLPA::isBufferAvailable(int *isAvail) {
     *isAvail = true;
     return NO_ERROR;
 }
+#endif
 
 #ifdef WITH_QCOM_VOIP_OVER_MVS
 status_t AudioHardware::setupDeviceforVoipCall(bool value)
